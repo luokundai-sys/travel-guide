@@ -7,7 +7,8 @@ let foundFood = [];
 let lastRoute = null;    // 生成后的 {city, days:[[poi...]]}
 let savedTrips = [];
 let activeSavedId = null;
-let map = null;
+let map = null;        // Leaflet 地图实例
+let mapLayer = null;   // 当前路线图层组
 let curCity = "";
 
 const PRESETS = ["成都", "西安", "大理", "北京", "上海", "杭州", "重庆", "厦门", "丽江", "青岛"];
@@ -74,20 +75,51 @@ function renderPresets() {
   });
 }
 
-// ---------- ① 搜景点/美食 ----------
+// ---------- 坐标系 GCJ-02 → WGS-84（高德是 GCJ-02，Leaflet/OSM 是 WGS-84）----------
+const PI = Math.PI, A_AXIS = 6378245.0, EE = 0.00669342162296594323;
+function outOfChina(lng, lat) { return !(lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55); }
+function tLat(x, y) {
+  let r = -100 + 2 * x + 3 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  r += (20 * Math.sin(6 * x * PI) + 20 * Math.sin(2 * x * PI)) * 2 / 3;
+  r += (20 * Math.sin(y * PI) + 40 * Math.sin(y / 3 * PI)) * 2 / 3;
+  r += (160 * Math.sin(y / 12 * PI) + 320 * Math.sin(y * PI / 30)) * 2 / 3;
+  return r;
+}
+function tLng(x, y) {
+  let r = 300 + x + 2 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  r += (20 * Math.sin(6 * x * PI) + 20 * Math.sin(2 * x * PI)) * 2 / 3;
+  r += (20 * Math.sin(x * PI) + 40 * Math.sin(x / 3 * PI)) * 2 / 3;
+  r += (150 * Math.sin(x / 12 * PI) + 300 * Math.sin(x / 30 * PI)) * 2 / 3;
+  return r;
+}
+function gcj2wgs(lng, lat) {
+  if (outOfChina(lng, lat)) return [lng, lat];
+  let dLat = tLat(lng - 105, lat - 35), dLng = tLng(lng - 105, lat - 35);
+  const rad = lat / 180 * PI;
+  let magic = Math.sin(rad); magic = 1 - EE * magic * magic;
+  const sq = Math.sqrt(magic);
+  dLat = (dLat * 180) / ((A_AXIS * (1 - EE)) / (magic * sq) * PI);
+  dLng = (dLng * 180) / (A_AXIS / sq * Math.cos(rad) * PI);
+  return [lng * 2 - (lng + dLng), lat * 2 - (lat + dLat)];
+}
+const httpsify = (u) => String(u || "").replace(/^http:\/\//, "https://");
+
+// ---------- ① 搜景点/美食（高德，带图片+评分）----------
 function searchPOI(city, keyword, type, count) {
   return new Promise((resolve) => {
     if (!amap) return resolve([]);
     const ps = new amap.PlaceSearch({ city, citylimit: true, pageSize: count, pageIndex: 1, type, extensions: "all" });
     ps.search(keyword, (status, result) => {
       const pois = (status === "complete" && result.poiList && result.poiList.pois) ? result.poiList.pois : [];
-      resolve(pois.map((p) => ({
-        name: p.name,
-        lng: p.location && p.location.lng,
-        lat: p.location && p.location.lat,
-        address: p.address || (p.pname || "") + (p.adname || ""),
-        rating: p.rating || (p.biz_ext && p.biz_ext.rating) || "",
-      })).filter((p) => p.lng && p.lat));
+      resolve(pois.map((p) => {
+        const [lng, lat] = (p.location) ? gcj2wgs(p.location.lng, p.location.lat) : [null, null];
+        return {
+          name: p.name, lng, lat,
+          address: p.address || (p.pname || "") + (p.adname || ""),
+          rating: p.rating || (p.biz_ext && p.biz_ext.rating) || "",
+          photo: (p.photos && p.photos[0] && httpsify(p.photos[0].url)) || "",
+        };
+      }).filter((p) => p.lng && p.lat));
     });
   });
 }
@@ -117,12 +149,15 @@ function renderChecks(sel, list, kind) {
   const box = $(sel);
   box.innerHTML = "";
   list.forEach((p, i) => {
-    const id = kind + "-" + i;
     const row = document.createElement("label");
-    row.className = "chk";
+    row.className = "chk" + (p.photo ? "" : " no-thumb");
+    const img = p.photo
+      ? `<img class="chk-thumb" src="${esc(p.photo)}" loading="lazy" alt="" onerror="this.classList.add('none');this.closest('.chk').classList.add('no-thumb')" />`
+      : "";
     row.innerHTML = `<input type="checkbox" data-kind="${kind}" data-i="${i}" />
+      ${img}
       <span class="chk-name">${esc(p.name)}</span>
-      <small>${p.rating ? "★" + esc(p.rating) + " · " : ""}${esc(p.address || "")}</small>`;
+      <small>${p.rating ? `<span class="rate">★${esc(p.rating)}</span> · ` : ""}${esc(p.address || "")}</small>`;
     box.appendChild(row);
   });
 }
@@ -204,20 +239,12 @@ async function osmGeocode(q) {
   } catch (e) { /* 网络/CORS 失败 → 当作没查到 */ }
   return null;
 }
-// WGS-84 → GCJ-02（高德坐标系）；海外坐标二者几乎一致
-function convertWgs(points) {
-  return new Promise((res) => {
-    if (!points.length || !amap.convertFrom) return res();
-    amap.convertFrom(points.map((p) => [p.lng, p.lat]), "gps", (status, result) => {
-      if (status === "complete" && result.locations) {
-        result.locations.forEach((loc, i) => { points[i].lng = loc.lng; points[i].lat = loc.lat; });
-      }
-      res();
-    });
-  });
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 统一存 WGS-84：高德来的(gcj=true)转一下，其余(OSM/Google/原始经纬度)直接用
+function pushPt(arr, name, lng, lat, gcj, address) {
+  const [L, T] = gcj ? gcj2wgs(lng, lat) : [lng, lat];
+  arr.push({ name, lng: L, lat: T, address: address || "" });
+}
 
 async function resolvePlaces(lines) {
   const pts = [], failed = [];
@@ -227,20 +254,19 @@ async function resolvePlaces(lines) {
     if (!line) continue;
     if (/^https?:\/\//i.test(line)) {
       const c = coordsFromUrl(line);
-      if (c) pts.push({ name: nameFromUrl(line) || "地点", lng: c.lng, lat: c.lat, wgs: !!c.wgs, address: "" });
+      if (c) pushPt(pts, nameFromUrl(line) || "地点", c.lng, c.lat, !c.wgs, "");
       else failed.push(line + "（短链取不到坐标，改贴含数字的完整链接或直接写地名）");
       continue;
     }
     const mll = line.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
-    if (mll) { pts.push({ name: line, lat: +mll[1], lng: +mll[2], wgs: true, address: "" }); continue; }
+    if (mll) { pushPt(pts, line, +mll[2], +mll[1], false, ""); continue; }
     // 全球地理编码优先（OSM 海外/国内都准）；高德只做兜底——它对海外会乱匹配到国内
     if (osmCalls++) await sleep(1100); // 遵守 Nominatim ≤1 req/s
     let g = await osmGeocode(line);
-    if (!g) g = await amapGeocode(line);
-    if (g) pts.push({ name: line, lng: g.lng, lat: g.lat, wgs: !!g.wgs, address: "" });
+    if (g) pushPt(pts, line, g.lng, g.lat, false, "");
+    else if (g = await amapGeocode(line)) pushPt(pts, line, g.lng, g.lat, true, "");
     else failed.push(line + "（没查到，换个更具体的写法）");
   }
-  await convertWgs(pts.filter((p) => p.wgs));
   return { pts, failed };
 }
 
@@ -270,26 +296,35 @@ async function generateFromText() {
 }
 
 function drawMap(days) {
-  if (!amap) return;
-  if (!map) map = new amap.Map("mapBox", { zoom: 11 });
-  map.clearMap();
-  const path = [];
+  if (!window.L) return;
+  if (!map) {
+    map = L.map("mapBox", { zoomControl: true });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap',
+    }).addTo(map);
+  }
+  if (mapLayer) mapLayer.remove();
+  mapLayer = L.layerGroup().addTo(map);
+  const latlngs = [];
   let idx = 0;
   const colors = ["#2f7d5b", "#e8553a", "#2d6cdf", "#b8860b", "#7d3cad"];
   days.forEach((day, di) => {
     day.forEach((p) => {
       idx++;
-      const pos = [p.lng, p.lat];
-      path.push(pos);
-      new amap.Marker({
-        position: pos, map,
-        content: `<div class="map-pin" style="background:${colors[di % colors.length]}">${idx}</div>`,
-        offset: new amap.Pixel(-12, -12),
-      });
+      const ll = [p.lat, p.lng];
+      latlngs.push(ll);
+      L.marker(ll, {
+        icon: L.divIcon({
+          className: "pin-wrap",
+          html: `<div class="map-pin" style="background:${colors[di % colors.length]}">${idx}</div>`,
+          iconSize: [24, 24], iconAnchor: [12, 12],
+        }),
+      }).addTo(mapLayer).bindPopup(`第${di + 1}天 · ${esc(p.name)}`);
     });
   });
-  if (path.length > 1) new amap.Polyline({ path, map, strokeColor: "#2f7d5b", strokeWeight: 4, strokeOpacity: 0.7 });
-  map.setFitView();
+  if (latlngs.length > 1) L.polyline(latlngs, { color: "#2f7d5b", weight: 4, opacity: 0.7 }).addTo(mapLayer);
+  map.invalidateSize();
+  if (latlngs.length) map.fitBounds(latlngs, { padding: [34, 34], maxZoom: 15 });
 }
 
 function renderRouteList(days) {
