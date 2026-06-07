@@ -40,7 +40,7 @@ function loadAMap() {
     if (!window.AMAP_KEY || window.AMAP_KEY.includes("YOUR_")) return reject(new Error("no amap key"));
     window._AMapSecurityConfig = { securityJsCode: window.AMAP_JSCODE };
     const s = document.createElement("script");
-    s.src = `https://webapi.amap.com/maps?v=2.0&key=${window.AMAP_KEY}&plugin=AMap.PlaceSearch`;
+    s.src = `https://webapi.amap.com/maps?v=2.0&key=${window.AMAP_KEY}&plugin=AMap.PlaceSearch,AMap.Geocoder`;
     s.onload = () => window.AMap ? resolve(window.AMap) : reject(new Error("AMap missing"));
     s.onerror = () => reject(new Error("amap load error"));
     document.head.appendChild(s);
@@ -58,6 +58,7 @@ function bind() {
   $("#searchBtn").onclick = () => doSearch($("#cityInput").value.trim());
   $("#cityInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch($("#cityInput").value.trim()); });
   $("#genBtn").onclick = generateRoute;
+  $("#genFromText").onclick = generateFromText;
   $("#saveBtn").onclick = saveRoute;
   $("#savedSelect").onchange = (e) => { activeSavedId = e.target.value; renderSavedDays(); };
   $("#delSaved").onclick = deleteSaved;
@@ -102,7 +103,7 @@ async function doSearch(city) {
   $("#tripName").value = city + "行程";
 
   const [attr, food] = await Promise.all([
-    searchPOI(city, "景点", "风景名胜|公园广场", 18),
+    searchPOI(city, "热门景点", "风景名胜", 18),
     searchPOI(city, "美食", "餐饮服务", 12),
   ]);
   foundAttr = attr; foundFood = food;
@@ -162,11 +163,105 @@ function generateRoute() {
   if (picked.length < 2) { alert("至少勾 2 个，才能排路线"); return; }
   const n = Math.max(1, Math.min(15, +$("#daysInput").value || 3));
   const days = splitDays(nearestOrder(picked), n);
-  lastRoute = { city: curCity, days };
+  const name = $("#tripName").value.trim() || (curCity + "行程");
+  lastRoute = { city: curCity, name, days };
   $("#routeCard").style.display = "";
   drawMap(days);
   renderRouteList(days);
   $("#routeCard").scrollIntoView({ behavior: "smooth" });
+}
+
+// ---------- ③' 自己加地点 → 路线（国内外都行）----------
+// 从地图链接里抠坐标：Google 用 WGS-84(需转 GCJ-02)，高德本身就是 GCJ-02。
+function coordsFromUrl(url) {
+  let m;
+  if (m = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)) return { lat: +m[1], lng: +m[2], wgs: true };
+  if (m = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)) return { lat: +m[1], lng: +m[2], wgs: true };
+  if (m = url.match(/[?&](?:q|query|ll|daddr|destination)=(-?\d+\.\d+),(-?\d+\.\d+)/)) return { lat: +m[1], lng: +m[2], wgs: true };
+  if (m = url.match(/[?&](?:position|location)=(-?\d+\.\d+),(-?\d+\.\d+)/)) return { lng: +m[1], lat: +m[2], wgs: false };
+  return null;
+}
+function nameFromUrl(url) {
+  const m = url.match(/\/place\/([^/@]+)/);
+  return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+}
+// 高德地理编码（国内强、海外弱）
+function amapGeocode(addr) {
+  return new Promise((res) => {
+    if (!amap || !amap.Geocoder) return res(null);
+    new amap.Geocoder({}).getLocation(addr, (status, result) => {
+      const g = (status === "complete" && result.geocodes && result.geocodes[0]) || null;
+      res(g ? { lng: g.location.lng, lat: g.location.lat, wgs: false } : null);
+    });
+  });
+}
+// OpenStreetMap Nominatim（免费全球，补海外）—— 返回 WGS-84
+async function osmGeocode(q) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=zh,en&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (j && j[0]) return { lng: +j[0].lon, lat: +j[0].lat, wgs: true };
+  } catch (e) { /* 网络/CORS 失败 → 当作没查到 */ }
+  return null;
+}
+// WGS-84 → GCJ-02（高德坐标系）；海外坐标二者几乎一致
+function convertWgs(points) {
+  return new Promise((res) => {
+    if (!points.length || !amap.convertFrom) return res();
+    amap.convertFrom(points.map((p) => [p.lng, p.lat]), "gps", (status, result) => {
+      if (status === "complete" && result.locations) {
+        result.locations.forEach((loc, i) => { points[i].lng = loc.lng; points[i].lat = loc.lat; });
+      }
+      res();
+    });
+  });
+}
+
+async function resolvePlaces(lines) {
+  const pts = [], failed = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^https?:\/\//i.test(line)) {
+      const c = coordsFromUrl(line);
+      if (c) pts.push({ name: nameFromUrl(line) || "地点", lng: c.lng, lat: c.lat, wgs: !!c.wgs, address: "" });
+      else failed.push(line + "（短链取不到坐标，改贴含数字的完整链接或直接写地名）");
+      continue;
+    }
+    const mll = line.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
+    if (mll) { pts.push({ name: line, lat: +mll[1], lng: +mll[2], wgs: true, address: "" }); continue; }
+    let g = await amapGeocode(line);
+    if (!g) g = await osmGeocode(line);
+    if (g) pts.push({ name: line, lng: g.lng, lat: g.lat, wgs: !!g.wgs, address: "" });
+    else failed.push(line + "（没查到，换个更具体的写法）");
+  }
+  await convertWgs(pts.filter((p) => p.wgs));
+  return { pts, failed };
+}
+
+async function generateFromText() {
+  const lines = $("#placesInput").value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (lines.length < 2) { alert("至少写 2 个地点，才能排路线"); return; }
+  if (!amap) { alert("高德还没加载好，稍等或刷新"); return; }
+  const btn = $("#genFromText"); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "查坐标中…";
+  $("#resolveMsg").style.display = "none";
+  try {
+    const { pts, failed } = await resolvePlaces(lines);
+    if (pts.length < 2) { alert("能定位的地点不足 2 个：\n" + failed.join("\n")); return; }
+    const picked = pts.map((p) => ({ ...p, type: "地点" }));
+    const n = Math.max(1, Math.min(15, +$("#mDaysInput").value || 3));
+    const days = splitDays(nearestOrder(picked), n);
+    const name = $("#mTripName").value.trim() || "我的行程";
+    lastRoute = { city: name, name, days };
+    $("#routeCard").style.display = "";
+    drawMap(days);
+    renderRouteList(days);
+    const m = $("#resolveMsg");
+    if (failed.length) { m.style.display = ""; m.textContent = "这些没定位上，已跳过：" + failed.join("； "); }
+    $("#routeCard").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { alert("出错：" + e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
 }
 
 function drawMap(days) {
@@ -217,7 +312,7 @@ function renderRouteList(days) {
 async function saveRoute() {
   if (!lastRoute) return;
   if (!DB.isConfigured()) { alert("Supabase 没配好，存不了"); return; }
-  const name = $("#tripName").value.trim() || (lastRoute.city + "行程");
+  const name = lastRoute.name || $("#tripName").value.trim() || (lastRoute.city + "行程");
   const trip = {
     id: uid("trip"),
     name, dest: lastRoute.city,

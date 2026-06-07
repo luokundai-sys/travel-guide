@@ -169,4 +169,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 18px 60px; }
 .route-item .ri-name { grid-area: n; font-size: 14px; }
 .route-item small { grid-area: s; color: var(--muted); font-size: 12px; }
 
+.hint { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0 0 10px; }
+.hint code { background: #f0f2f5; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.places-ta { width: 100%; min-height: 120px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; font-family: inherit; resize: vertical; line-height: 1.7; }
+
 @media (max-width: 560px) { .pick-cols { grid-template-columns: 1fr; } }

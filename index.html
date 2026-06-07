@@ -28,6 +28,19 @@
       <div class="presets" id="presets"></div>
     </section>
 
+    <section class="card" id="manualCard">
+      <h2>或：自己加地点（国内外都行）</h2>
+      <p class="hint">一行一个：<b>地名</b> 或 <b>地图链接</b>。国外城市也行——直接写地名（如 <code>清水寺 京都</code>、<code>Marina Bay Sands Singapore</code>），或粘高德 / Google 地图链接。</p>
+      <textarea id="placesInput" class="places-ta" placeholder="清水寺 京都&#10;金阁寺 京都&#10;伏见稻荷大社 京都&#10;https://maps.google.com/...（含数字坐标的完整链接）"></textarea>
+      <div class="plan-row gen-row">
+        <label>分几天</label>
+        <input class="num" id="mDaysInput" type="number" min="1" max="15" value="3" />
+        <input class="search" id="mTripName" placeholder="行程名（如：京都3日）" />
+        <button class="btn primary" id="genFromText">生成最优路线</button>
+      </div>
+      <div id="resolveMsg" class="empty" style="display:none"></div>
+    </section>
+
     <section class="card" id="pickCard" style="display:none">
       <h2>② 勾选想去的（景点 + 美食）</h2>
       <div id="loading" class="empty" style="display:none">正在拉取…</div>
