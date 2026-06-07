@@ -217,8 +217,11 @@ function convertWgs(points) {
   });
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function resolvePlaces(lines) {
   const pts = [], failed = [];
+  let osmCalls = 0;
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
@@ -230,8 +233,10 @@ async function resolvePlaces(lines) {
     }
     const mll = line.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
     if (mll) { pts.push({ name: line, lat: +mll[1], lng: +mll[2], wgs: true, address: "" }); continue; }
-    let g = await amapGeocode(line);
-    if (!g) g = await osmGeocode(line);
+    // 全球地理编码优先（OSM 海外/国内都准）；高德只做兜底——它对海外会乱匹配到国内
+    if (osmCalls++) await sleep(1100); // 遵守 Nominatim ≤1 req/s
+    let g = await osmGeocode(line);
+    if (!g) g = await amapGeocode(line);
     if (g) pts.push({ name: line, lng: g.lng, lat: g.lat, wgs: !!g.wgs, address: "" });
     else failed.push(line + "（没查到，换个更具体的写法）");
   }
