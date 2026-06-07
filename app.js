@@ -258,7 +258,7 @@ async function generateFromText() {
     const n = Math.max(1, Math.min(15, +$("#mDaysInput").value || 3));
     const days = splitDays(nearestOrder(picked), n);
     const name = $("#mTripName").value.trim() || "我的行程";
-    lastRoute = { city: name, name, days };
+    lastRoute = { city: "", name, days };
     $("#routeCard").style.display = "";
     drawMap(days);
     renderRouteList(days);
@@ -345,7 +345,7 @@ async function refreshSaved() {
 function renderSavedSelect() {
   const sel = $("#savedSelect");
   if (!savedTrips.length) { sel.innerHTML = `<option>（还没有共享行程）</option>`; return; }
-  sel.innerHTML = savedTrips.map((t) => `<option value="${t.id}">${esc(t.name)} · ${esc(t.dest || "")}</option>`).join("");
+  sel.innerHTML = savedTrips.map((t) => `<option value="${t.id}">${esc(t.name)}${t.dest ? " · " + esc(t.dest) : ""}</option>`).join("");
   if (activeSavedId) sel.value = activeSavedId;
 }
 function renderSavedDays() {
