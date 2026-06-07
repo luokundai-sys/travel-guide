@@ -9,88 +9,66 @@
 <body>
   <header class="app-bar">
     <div class="logo">行<span>囊</span></div>
-    <nav class="tabs">
-      <button class="tab-btn active" data-tab="guides">攻略库</button>
-      <button class="tab-btn" data-tab="trips">我的行程</button>
-    </nav>
     <div class="spacer"></div>
-    <div class="fav-count" id="favCount"></div>
     <div class="sync" id="syncStatus"></div>
   </header>
 
   <div class="banner" id="setupBanner" style="display:none">
-    还没接后端 —— 按 <b>SETUP.md</b> 建 Supabase 项目、把两个值填进 <b>config.js</b>，刷新即可。
-    <span id="setupMsg"></span>
+    还没配好 —— 检查 <b>config.js</b> 的 Supabase / 高德 key。<span id="setupMsg"></span>
   </div>
 
   <main>
-    <!-- 攻略库 -->
-    <section class="view active" id="view-guides">
-      <div class="toolbar">
-        <input class="search" id="guideSearch" placeholder="搜目的地、景点、关键词…" />
-        <div class="chips" id="tagChips"></div>
-        <button class="btn primary" id="newGuideBtn">+ 新建攻略</button>
+    <!-- 规划 -->
+    <section class="card">
+      <h2>① 选城市</h2>
+      <div class="plan-row">
+        <input class="search" id="cityInput" placeholder="输入城市，如 成都、西安、大理…" />
+        <button class="btn primary" id="searchBtn">搜景点美食</button>
       </div>
-      <div class="grid" id="guideGrid"></div>
+      <div class="presets" id="presets"></div>
     </section>
 
-    <!-- 我的行程 -->
-    <section class="view" id="view-trips">
-      <div class="trips-head">
-        <select class="trip-select" id="tripSelect"></select>
-        <button class="btn primary" id="newTripBtn">+ 新建行程</button>
-        <button class="btn" id="delTripBtn">删除当前行程</button>
-        <div class="spacer"></div>
-        <div class="fav-count">行程全家共享 · 卡片可拖动排序、跨天移动</div>
+    <section class="card" id="pickCard" style="display:none">
+      <h2>② 勾选想去的（景点 + 美食）</h2>
+      <div id="loading" class="empty" style="display:none">正在拉取…</div>
+      <div class="pick-cols">
+        <div>
+          <div class="col-title">🏛 景点</div>
+          <div id="attrList" class="check-list"></div>
+        </div>
+        <div>
+          <div class="col-title">🍜 美食</div>
+          <div id="foodList" class="check-list"></div>
+        </div>
       </div>
-      <div class="days-wrap" id="daysWrap"></div>
+      <div class="plan-row gen-row">
+        <label>分几天</label>
+        <input class="num" id="daysInput" type="number" min="1" max="15" value="3" />
+        <input class="search" id="tripName" placeholder="行程名（如：十一成都行）" />
+        <button class="btn primary" id="genBtn">③ 生成最优路线</button>
+      </div>
+    </section>
+
+    <section class="card" id="routeCard" style="display:none">
+      <h2>④ 推荐路线</h2>
+      <div id="mapBox" class="map-box"></div>
+      <div id="routeList"></div>
+      <button class="btn primary" id="saveBtn">存为家庭行程（全家可见）</button>
+    </section>
+
+    <!-- 共享行程 -->
+    <section class="card">
+      <h2>家庭行程 · 共享</h2>
+      <div class="plan-row">
+        <select class="trip-select" id="savedSelect"></select>
+        <button class="btn" id="delSaved">删除</button>
+      </div>
+      <div id="savedDays" class="days-wrap"></div>
     </section>
   </main>
 
-  <!-- 新建行程 -->
-  <div class="modal-back" id="newTripModal">
-    <div class="modal">
-      <h3>新建行程</h3>
-      <label>行程名称</label><input id="ntName" placeholder="例如：十一成都之行" />
-      <label>目的地</label><input id="ntDest" placeholder="例如：成都" />
-      <label>天数</label><input id="ntDays" type="number" min="1" max="30" value="3" />
-      <div class="row"><button class="btn" id="ntCancel">取消</button><button class="btn primary" id="ntCreate">创建</button></div>
-    </div>
-  </div>
-
-  <!-- 选择加入哪天 -->
-  <div class="modal-back" id="pickDayModal">
-    <div class="modal">
-      <h3 id="pdTitle">加入行程</h3>
-      <label>选择行程</label><select id="pdTrip"></select>
-      <label>加到第几天</label><select id="pdDay"></select>
-      <div class="row"><button class="btn" id="pdCancel">取消</button><button class="btn primary" id="pdConfirm">加入</button></div>
-    </div>
-  </div>
-
-  <!-- 攻略编辑器 -->
-  <div class="modal-back" id="guideEditModal">
-    <div class="modal modal-wide">
-      <h3 id="geTitle">新建攻略</h3>
-      <div class="ge-grid">
-        <div><label>目的地 *</label><input id="geDest" placeholder="成都" /></div>
-        <div><label>标题 *</label><input id="geName" placeholder="成都 3 天慢生活" /></div>
-        <div><label>天数</label><input id="geDays" type="number" min="1" max="30" value="3" /></div>
-        <div><label>适合季节</label><input id="geSeason" placeholder="3-5 月最舒服" /></div>
-      </div>
-      <label>标签（顿号/逗号分隔）</label><input id="geTags" placeholder="美食、熊猫、悠闲" />
-      <label>一句话简介</label><input id="geSummary" placeholder="吃辣、看熊猫、泡茶馆。" />
-      <label>景点 / 美食 / 活动</label>
-      <div class="ge-poi-head"><span>名称</span><span>类型</span><span>区域</span><span>时长</span><span>贴士</span><span></span></div>
-      <div id="gePoiList"></div>
-      <button class="btn" id="geAddPoi" style="margin-top:8px">+ 加一条</button>
-      <div class="row"><button class="btn" id="geCancel">取消</button><button class="btn primary" id="geSave">保存</button></div>
-    </div>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="seed.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="db.js"></script>
   <script src="app.js"></script>
 </body>

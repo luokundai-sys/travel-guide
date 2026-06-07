@@ -139,3 +139,34 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 18px 60px; }
   .ge-poi-head { display: none; }
   .ge-poi-row { grid-template-columns: 1fr 1fr; }
 }
+
+/* ===== 新流程：选城市→勾选→路线 ===== */
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+.card h2 { margin: 0 0 12px; font-size: 17px; }
+.plan-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.num { width: 70px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 14px; }
+.gen-row { margin-top: 14px; }
+.gen-row label { font-size: 13px; color: var(--muted); }
+
+.pick-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.col-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+.check-list { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; }
+.chk { display: grid; grid-template-columns: 20px 1fr; grid-template-areas: "c n" ". s"; gap: 2px 8px; align-items: center; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+.chk:hover { background: #fafbfc; }
+.chk input { grid-area: c; width: 16px; height: 16px; }
+.chk .chk-name { grid-area: n; font-size: 14px; }
+.chk small { grid-area: s; color: var(--muted); font-size: 12px; }
+
+.map-box { width: 100%; height: 340px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; background: #eef1f4; }
+.map-pin { width: 24px; height: 24px; border-radius: 50%; color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+#routeList { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 14px; }
+.route-day { flex: 0 0 260px; background: #fafbfc; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.route-day h4 { margin: 0 0 8px; font-size: 15px; }
+.route-item { display: grid; grid-template-columns: 24px 1fr; grid-template-areas: "o n" ". s"; gap: 2px 8px; padding: 6px 0; border-top: 1px solid #eef0f3; }
+.route-item:first-of-type { border-top: none; }
+.route-item .ord { grid-area: o; width: 22px; height: 22px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.route-item .ri-name { grid-area: n; font-size: 14px; }
+.route-item small { grid-area: s; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 560px) { .pick-cols { grid-template-columns: 1fr; } }
