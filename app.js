@@ -115,6 +115,7 @@ function searchPOI(city, keyword, type, count) {
         const [lng, lat] = (p.location) ? gcj2wgs(p.location.lng, p.location.lat) : [null, null];
         return {
           name: p.name, lng, lat,
+          city: p.cityname || p.adname || p.pname || "",
           address: p.address || (p.pname || "") + (p.adname || ""),
           rating: p.rating || (p.biz_ext && p.biz_ext.rating) || "",
           photo: (p.photos && p.photos[0] && httpsify(p.photos[0].url)) || "",
@@ -207,7 +208,15 @@ async function doSearch(city) {
     ]);
   }
 
-  if (attr.length) {                       // 国内：高德 + 图片评分
+  // 高德对未知/海外城市会无视 citylimit 返回全国热门 → 必须核对结果是否真在该城市
+  const q = city.replace(/(市|区|县|省|自治州|特别行政区)$/, "");
+  const onCity = attr.filter((p) => {
+    const c = (p.city || "").replace(/(市|区|县|省|自治州|特别行政区)$/, "");
+    return c && (c.includes(q) || q.includes(c));
+  }).length;
+  const isDomestic = attr.length > 0 && onCity >= Math.ceil(attr.length / 2);
+
+  if (isDomestic) {                        // 国内：高德 + 图片评分
     foundAttr = attr; foundFood = food;
     $("#loading").style.display = "none";
     renderChecks("#attrList", attr, "景点");
