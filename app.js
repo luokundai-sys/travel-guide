@@ -192,10 +192,9 @@ async function overseasSearch(city) {
   const geo = await osmGeocodeFull(city);
   if (!geo || !geo.boundingbox) return { attr: [] };
   const [s, n, w, e] = geo.boundingbox.map(Number);
-  // historic 只取观光向类型（避开名人墓/纪念碑那类高名气但非景点的噪声）
   const q = `[out:json][timeout:25];(
     nwr["tourism"~"attraction|museum|viewpoint|gallery|zoo|theme_park|artwork"]["wikidata"](${s},${w},${n},${e});
-    nwr["historic"~"castle|monument|ruins|temple|shrine|archaeological_site|monastery|palace|fort|city_gate|manor"]["wikidata"](${s},${w},${n},${e});
+    nwr["historic"]["wikidata"](${s},${w},${n},${e});
   );out center 400;`;
   const els = await overpass(q);
   const seen = new Set(), cand = [];
@@ -208,18 +207,20 @@ async function overseasSearch(city) {
     cand.push({ qid, lat, lng, fallback: pickName(t) });
   }
   if (!cand.length) return { attr: [] };
-  // 名气排序，取前 16
+  // 名气排序，多取一些(前 26)做缓冲，再过滤掉名人墓那类“人物”
   const meta = await wikidataSitelinks(cand.map((c) => c.qid));
   cand.forEach((c) => { const m = meta[c.qid] || {}; c.fame = m.fame || 0; c.zh = m.zh; c.en = m.en; });
   cand.sort((a, b) => b.fame - a.fame);
-  const top = cand.slice(0, 16);
-  // 取图+简介（中文标题优先），展示名也用中文标题
-  await Promise.all(top.map(async (c) => {
+  const pool = cand.slice(0, 26);
+  await Promise.all(pool.map(async (c) => {
     const wi = c.zh ? await wikiSummary("zh", c.zh) : (c.en ? await wikiSummary("en", c.en) : { photo: "", desc: "" });
     c.name = c.zh || c.en || c.fallback || "景点";
     c.photo = wi.photo; c.desc = wi.desc;
   }));
-  return { attr: top.map((c) => ({ name: c.name, lng: c.lng, lat: c.lat, address: c.desc || "", rating: "", photo: c.photo || "" })) };
+  const isPerson = (d) => /天皇|皇后|皇太|親王|王妃|政治家|武将|軍人|大名|将軍|公卿|貴族|歌人|僧侶|emperor|empress|prince|politician|samurai|daimyo|shogun|general|poet|writer|noble|monk\b|person/i.test(d || "");
+  const attr = pool.filter((c) => !isPerson(c.desc)).slice(0, 16)
+    .map((c) => ({ name: c.name, lng: c.lng, lat: c.lat, address: c.desc || "", rating: "", photo: c.photo || "" }));
+  return { attr };
 }
 
 async function doSearch(city) {
