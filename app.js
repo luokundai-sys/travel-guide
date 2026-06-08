@@ -128,18 +128,26 @@ function searchPOI(city, keyword, type, count) {
 // ---------- ①' 海外城市：OSM/Overpass 列景点 + 维基百科配图 ----------
 function pickName(t) { return t["name:zh"] || t["name:en"] || t.name || ""; }
 
-async function osmGeocodeFull(q) {
+const CITY_TYPES = ["city", "town", "municipality", "administrative", "county", "state", "province", "village", "suburb"];
+async function osmCityQuery(query) {
   try {
-    // 取多个结果，优先选行政区/城市（否则「京都」会命中京都塔那种小点，bbox 只覆盖车站附近）
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=zh,en&q=${encodeURIComponent(q)}`);
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=zh,en&q=${encodeURIComponent(query)}`);
     const j = await r.json();
     if (!j || !j.length) return null;
-    const cityTypes = ["city", "town", "municipality", "administrative", "county", "state", "province", "village", "suburb"];
-    return j.find((x) => cityTypes.includes(x.addresstype))
-      || j.find((x) => x.class === "boundary" || x.class === "place")
-      || j[0];
-  } catch (e) { /* 忽略 */ }
-  return null;
+    return { admin: j.find((x) => CITY_TYPES.includes(x.addresstype)) || j.find((x) => x.class === "boundary"), first: j[0] };
+  } catch (e) { return null; }
+}
+async function osmGeocodeFull(q) {
+  // 优先命中行政区/城市。裸名（如「京都」）常只匹配到同名车站 → 补「市」/「 city」再试一次
+  let res = await osmCityQuery(q);
+  if (res && res.admin) return res.admin;
+  const alt = /[一-鿿]/.test(q) ? q.replace(/[市区]$/, "") + "市" : q + " city";
+  if (alt !== q) {
+    await sleep(1100); // 遵守 Nominatim ≤1 req/s
+    const r2 = await osmCityQuery(alt);
+    if (r2 && r2.admin) return r2.admin;
+  }
+  return (res && res.first) || null;
 }
 
 async function overpass(query) {
