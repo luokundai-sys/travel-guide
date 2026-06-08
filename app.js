@@ -130,9 +130,14 @@ function pickName(t) { return t["name:zh"] || t["name:en"] || t.name || ""; }
 
 async function osmGeocodeFull(q) {
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=zh,en&q=${encodeURIComponent(q)}`);
+    // 取多个结果，优先选行政区/城市（否则「京都」会命中京都塔那种小点，bbox 只覆盖车站附近）
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=zh,en&q=${encodeURIComponent(q)}`);
     const j = await r.json();
-    if (j && j[0]) return j[0];
+    if (!j || !j.length) return null;
+    const cityTypes = ["city", "town", "municipality", "administrative", "county", "state", "province", "village", "suburb"];
+    return j.find((x) => cityTypes.includes(x.addresstype))
+      || j.find((x) => x.class === "boundary" || x.class === "place")
+      || j[0];
   } catch (e) { /* 忽略 */ }
   return null;
 }
