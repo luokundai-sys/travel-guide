@@ -162,20 +162,28 @@ async function overpass(query) {
   return [];
 }
 
-// 用 OSM 标签里的 wikipedia / name 去维基百科取缩略图 + 一句简介（优先中文）
-async function wikiInfo(t) {
-  const cands = [];
-  if (t["name:zh"]) cands.push(["zh", t["name:zh"]]);
-  if (t.wikipedia && t.wikipedia.includes(":")) { const i = t.wikipedia.indexOf(":"); cands.push([t.wikipedia.slice(0, i), t.wikipedia.slice(i + 1)]); }
-  else if (t["name:en"]) cands.push(["en", t["name:en"]]);
-  for (const [lang, title] of cands.slice(0, 2)) {
+// 用维基数据「站点链接数」当名气分（清水寺有几十个语言版，冷门小馆只有1~2个），顺带拿中/英文标题
+async function wikidataSitelinks(qids) {
+  const out = {};
+  for (let i = 0; i < qids.length; i += 45) {
+    const chunk = qids.slice(i, i + 45);
     try {
-      const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
-      if (!r.ok) continue;
+      const r = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&props=sitelinks&format=json&origin=*&ids=${chunk.join("|")}`);
       const j = await r.json();
-      if (j.thumbnail && j.thumbnail.source) return { photo: j.thumbnail.source, desc: j.description || "" };
-    } catch (e) { /* 试下一个 */ }
+      for (const qid in (j.entities || {})) {
+        const sl = j.entities[qid].sitelinks || {};
+        out[qid] = { fame: Object.keys(sl).length, zh: sl.zhwiki && sl.zhwiki.title, en: sl.enwiki && sl.enwiki.title };
+      }
+    } catch (e) { /* 跳过这批 */ }
   }
+  return out;
+}
+// 按确定的语言+标题取维基缩略图 + 一句简介
+async function wikiSummary(lang, title) {
+  try {
+    const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+    if (r.ok) { const j = await r.json(); return { photo: j.thumbnail ? j.thumbnail.source : "", desc: j.description || "" }; }
+  } catch (e) { /* 无 */ }
   return { photo: "", desc: "" };
 }
 
@@ -185,23 +193,32 @@ async function overseasSearch(city) {
   const [s, n, w, e] = geo.boundingbox.map(Number);
   const q = `[out:json][timeout:25];(
     nwr["tourism"~"attraction|museum|viewpoint|gallery|zoo|theme_park|artwork"]["wikidata"](${s},${w},${n},${e});
-    nwr["historic"~"castle|monument|memorial|ruins|temple|shrine|archaeological_site|monastery"]["wikidata"](${s},${w},${n},${e});
-  );out center 80;`;
+    nwr["historic"~"castle|monument|memorial|ruins|temple|shrine|archaeological_site|monastery|palace"]["wikidata"](${s},${w},${n},${e});
+    nwr["amenity"="place_of_worship"]["wikidata"](${s},${w},${n},${e});
+  );out center 200;`;
   const els = await overpass(q);
-  const seen = new Set(), list = [];
+  const seen = new Set(), cand = [];
   for (const el of els) {
-    const t = el.tags || {}, name = pickName(t);
-    if (!name || seen.has(name)) continue;
+    const t = el.tags || {}, qid = t.wikidata;
+    if (!qid || seen.has(qid)) continue;
     const lat = el.lat ?? (el.center && el.center.lat), lng = el.lon ?? (el.center && el.center.lon);
     if (lat == null || lng == null) continue;
-    seen.add(name);
-    list.push({ name, lat, lng, t });
+    seen.add(qid);
+    cand.push({ qid, lat, lng, fallback: pickName(t) });
   }
-  // 有中/英文名的（更广为人知）排前面
-  list.sort((a, b) => (a.t["name:zh"] || a.t["name:en"] ? 0 : 1) - (b.t["name:zh"] || b.t["name:en"] ? 0 : 1));
-  const top = list.slice(0, 16);
-  await Promise.all(top.map(async (it) => { const wi = await wikiInfo(it.t); it.photo = wi.photo; it.desc = wi.desc; }));
-  return { attr: top.map((it) => ({ name: it.name, lng: it.lng, lat: it.lat, address: it.desc || "", rating: "", photo: it.photo || "" })) };
+  if (!cand.length) return { attr: [] };
+  // 名气排序，取前 16
+  const meta = await wikidataSitelinks(cand.map((c) => c.qid));
+  cand.forEach((c) => { const m = meta[c.qid] || {}; c.fame = m.fame || 0; c.zh = m.zh; c.en = m.en; });
+  cand.sort((a, b) => b.fame - a.fame);
+  const top = cand.slice(0, 16);
+  // 取图+简介（中文标题优先），展示名也用中文标题
+  await Promise.all(top.map(async (c) => {
+    const wi = c.zh ? await wikiSummary("zh", c.zh) : (c.en ? await wikiSummary("en", c.en) : { photo: "", desc: "" });
+    c.name = c.zh || c.en || c.fallback || "景点";
+    c.photo = wi.photo; c.desc = wi.desc;
+  }));
+  return { attr: top.map((c) => ({ name: c.name, lng: c.lng, lat: c.lat, address: c.desc || "", rating: "", photo: c.photo || "" })) };
 }
 
 async function doSearch(city) {
