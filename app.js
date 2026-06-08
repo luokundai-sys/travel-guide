@@ -124,25 +124,105 @@ function searchPOI(city, keyword, type, count) {
   });
 }
 
+// ---------- ①' 海外城市：OSM/Overpass 列景点 + 维基百科配图 ----------
+function pickName(t) { return t["name:zh"] || t["name:en"] || t.name || ""; }
+
+async function osmGeocodeFull(q) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=zh,en&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (j && j[0]) return j[0];
+  } catch (e) { /* 忽略 */ }
+  return null;
+}
+
+async function overpass(query) {
+  const eps = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+  for (const ep of eps) {
+    try {
+      const r = await fetch(ep, { method: "POST", body: "data=" + encodeURIComponent(query) });
+      if (!r.ok) continue;
+      return (await r.json()).elements || [];
+    } catch (e) { /* 换下一个端点 */ }
+  }
+  return [];
+}
+
+// 用 OSM 标签里的 wikipedia / name 去维基百科取缩略图 + 一句简介（优先中文）
+async function wikiInfo(t) {
+  const cands = [];
+  if (t["name:zh"]) cands.push(["zh", t["name:zh"]]);
+  if (t.wikipedia && t.wikipedia.includes(":")) { const i = t.wikipedia.indexOf(":"); cands.push([t.wikipedia.slice(0, i), t.wikipedia.slice(i + 1)]); }
+  else if (t["name:en"]) cands.push(["en", t["name:en"]]);
+  for (const [lang, title] of cands.slice(0, 2)) {
+    try {
+      const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j.thumbnail && j.thumbnail.source) return { photo: j.thumbnail.source, desc: j.description || "" };
+    } catch (e) { /* 试下一个 */ }
+  }
+  return { photo: "", desc: "" };
+}
+
+async function overseasSearch(city) {
+  const geo = await osmGeocodeFull(city);
+  if (!geo || !geo.boundingbox) return { attr: [] };
+  const [s, n, w, e] = geo.boundingbox.map(Number);
+  const q = `[out:json][timeout:25];(
+    nwr["tourism"~"attraction|museum|viewpoint|gallery|zoo|theme_park|artwork"]["wikidata"](${s},${w},${n},${e});
+    nwr["historic"~"castle|monument|memorial|ruins|temple|shrine|archaeological_site|monastery"]["wikidata"](${s},${w},${n},${e});
+  );out center 80;`;
+  const els = await overpass(q);
+  const seen = new Set(), list = [];
+  for (const el of els) {
+    const t = el.tags || {}, name = pickName(t);
+    if (!name || seen.has(name)) continue;
+    const lat = el.lat ?? (el.center && el.center.lat), lng = el.lon ?? (el.center && el.center.lon);
+    if (lat == null || lng == null) continue;
+    seen.add(name);
+    list.push({ name, lat, lng, t });
+  }
+  // 有中/英文名的（更广为人知）排前面
+  list.sort((a, b) => (a.t["name:zh"] || a.t["name:en"] ? 0 : 1) - (b.t["name:zh"] || b.t["name:en"] ? 0 : 1));
+  const top = list.slice(0, 16);
+  await Promise.all(top.map(async (it) => { const wi = await wikiInfo(it.t); it.photo = wi.photo; it.desc = wi.desc; }));
+  return { attr: top.map((it) => ({ name: it.name, lng: it.lng, lat: it.lat, address: it.desc || "", rating: "", photo: it.photo || "" })) };
+}
+
 async function doSearch(city) {
   if (!city) { alert("先输入城市"); return; }
-  if (!amap) { alert("高德还没加载好，稍等或刷新"); return; }
   curCity = city;
   $("#pickCard").style.display = "";
   $("#routeCard").style.display = "none";
-  $("#loading").style.display = "";
+  $("#loading").style.display = ""; $("#loading").textContent = "正在拉取…";
   $("#attrList").innerHTML = ""; $("#foodList").innerHTML = "";
   $("#tripName").value = city + "行程";
 
-  const [attr, food] = await Promise.all([
-    searchPOI(city, "热门景点", "风景名胜", 18),
-    searchPOI(city, "美食", "餐饮服务", 12),
-  ]);
-  foundAttr = attr; foundFood = food;
+  let attr = [], food = [];
+  if (amap) {
+    [attr, food] = await Promise.all([
+      searchPOI(city, "热门景点", "风景名胜", 18),
+      searchPOI(city, "美食", "餐饮服务", 12),
+    ]);
+  }
+
+  if (attr.length) {                       // 国内：高德 + 图片评分
+    foundAttr = attr; foundFood = food;
+    $("#loading").style.display = "none";
+    renderChecks("#attrList", attr, "景点");
+    renderChecks("#foodList", food, "美食");
+    return;
+  }
+
+  // 海外：OSM/Overpass + 维基图片
+  $("#loading").textContent = "国内没搜到，按海外城市找经典景点（约 10 秒）…";
+  const ov = await overseasSearch(city);
+  foundAttr = ov.attr; foundFood = [];
   $("#loading").style.display = "none";
-  renderChecks("#attrList", attr, "景点");
-  renderChecks("#foodList", food, "美食");
-  if (!attr.length && !food.length) $("#attrList").innerHTML = `<p class="empty">没搜到，换个城市名试试</p>`;
+  renderChecks("#attrList", ov.attr, "景点");
+  if (!ov.attr.length) $("#attrList").innerHTML = `<p class="empty">没找到。换个更准确的城市名（中/英文都行，如「京都」「Kyoto」「Paris」），或用上方「自己加地点」。</p>`;
+  $("#foodList").innerHTML = `<p class="empty">海外美食暂未自动推荐 —— 到上方「自己加地点」粘店名/链接，可一起排进路线。</p>`;
 }
 
 function renderChecks(sel, list, kind) {
