@@ -164,9 +164,10 @@ async function overpass(query) {
 
 // 用维基数据「站点链接数」当名气分（清水寺有几十个语言版，冷门小馆只有1~2个），顺带拿中/英文标题
 async function wikidataSitelinks(qids) {
+  const chunks = [];
+  for (let i = 0; i < qids.length; i += 45) chunks.push(qids.slice(i, i + 45));
   const out = {};
-  for (let i = 0; i < qids.length; i += 45) {
-    const chunk = qids.slice(i, i + 45);
+  await Promise.all(chunks.map(async (chunk) => {
     try {
       const r = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&props=sitelinks&format=json&origin=*&ids=${chunk.join("|")}`);
       const j = await r.json();
@@ -175,7 +176,7 @@ async function wikidataSitelinks(qids) {
         out[qid] = { fame: Object.keys(sl).length, zh: sl.zhwiki && sl.zhwiki.title, en: sl.enwiki && sl.enwiki.title };
       }
     } catch (e) { /* 跳过这批 */ }
-  }
+  }));
   return out;
 }
 // 按确定的语言+标题取维基缩略图 + 一句简介
@@ -191,11 +192,11 @@ async function overseasSearch(city) {
   const geo = await osmGeocodeFull(city);
   if (!geo || !geo.boundingbox) return { attr: [] };
   const [s, n, w, e] = geo.boundingbox.map(Number);
+  // historic 只取观光向类型（避开名人墓/纪念碑那类高名气但非景点的噪声）
   const q = `[out:json][timeout:25];(
     nwr["tourism"~"attraction|museum|viewpoint|gallery|zoo|theme_park|artwork"]["wikidata"](${s},${w},${n},${e});
-    nwr["historic"~"castle|monument|memorial|ruins|temple|shrine|archaeological_site|monastery|palace"]["wikidata"](${s},${w},${n},${e});
-    nwr["amenity"="place_of_worship"]["wikidata"](${s},${w},${n},${e});
-  );out center 200;`;
+    nwr["historic"~"castle|monument|ruins|temple|shrine|archaeological_site|monastery|palace|fort|city_gate|manor"]["wikidata"](${s},${w},${n},${e});
+  );out center 400;`;
   const els = await overpass(q);
   const seen = new Set(), cand = [];
   for (const el of els) {
